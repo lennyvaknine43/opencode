@@ -72,6 +72,8 @@ export namespace SessionPrompt {
         string,
         {
           abort: AbortController
+          settled: Promise<void>
+          settle: () => void
           callbacks: {
             resolve(input: MessageV2.WithParts): void
             reject(reason?: any): void
@@ -84,6 +86,10 @@ export namespace SessionPrompt {
       for (const item of Object.values(current)) {
         item.abort.abort()
       }
+      await Promise.race([
+        Promise.allSettled(Object.values(current).map((i) => i.settled)),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ])
     },
   )
 
@@ -243,10 +249,9 @@ export namespace SessionPrompt {
     const s = state()
     if (s[sessionID]) return
     const controller = new AbortController()
-    s[sessionID] = {
-      abort: controller,
-      callbacks: [],
-    }
+    let settle!: () => void
+    const settled = new Promise<void>((r) => { settle = r })
+    s[sessionID] = { abort: controller, settled, settle, callbacks: [] }
     return controller.signal
   }
 
@@ -286,6 +291,8 @@ export namespace SessionPrompt {
       })
     }
 
+    const entry = state()[sessionID]
+    try {
     await using _ = defer(() => cancel(sessionID))
 
     // Structured output state
@@ -753,6 +760,9 @@ export namespace SessionPrompt {
       return item
     }
     throw new Error("Impossible")
+    } finally {
+      entry.settle()
+    }
   })
 
   async function lastModel(sessionID: SessionID) {
