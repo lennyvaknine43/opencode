@@ -75,8 +75,6 @@ export default [
   SyncEvent.project(MessageV2.Event.Updated, (db, data) => {
     const time_created = data.info.time.created
     const { id, sessionID, ...rest } = data.info
-    const hit = db.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, sessionID)).get()
-    if (!hit) return
 
     db.insert(MessageTable)
       .values({
@@ -103,8 +101,6 @@ export default [
 
   SyncEvent.project(MessageV2.Event.PartUpdated, (db, data) => {
     const { id, messageID, sessionID, ...rest } = data.part
-    const hit = db.select({ id: MessageTable.id }).from(MessageTable).where(eq(MessageTable.id, messageID)).get()
-    if (!hit) return
 
     db.insert(PartTable)
       .values({
