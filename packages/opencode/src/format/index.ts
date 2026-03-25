@@ -38,7 +38,7 @@ export namespace Format {
     Effect.gen(function* () {
       const state = yield* InstanceState.make(
         Effect.fn("Format.state")(function* (_ctx) {
-          const enabled: Record<string, boolean> = {}
+          const enabled: Record<string, string[] | false> = {}
           const formatters: Record<string, Formatter.Info> = {}
 
           const cfg = yield* Effect.promise(() => Config.get())
@@ -63,7 +63,7 @@ export namespace Format {
               formatters[name] = {
                 ...info,
                 name,
-                enabled: async () => true,
+                enabled: async () => info.command,
               }
             }
           } else {
@@ -80,21 +80,32 @@ export namespace Format {
           }
 
           async function getFormatter(ext: string) {
+            const result: Array<{
+              name: string
+              command: string[]
+              environment?: Record<string, string>
+            }> = []
+
             const matching = Object.values(formatters).filter((item) => item.extensions.includes(ext))
             const checks = await Promise.all(
               matching.map(async (item) => {
                 log.info("checking", { name: item.name, ext })
-                const on = await isEnabled(item)
-                if (on) {
-                  log.info("enabled", { name: item.name, ext })
-                }
+                const cmd = await isEnabled(item)
+                if (!cmd) return
+                log.info("enabled", { name: item.name, ext })
                 return {
-                  item,
-                  enabled: on,
+                  name: item.name,
+                  command: cmd,
+                  environment: item.environment,
                 }
               }),
             )
-            return checks.filter((x) => x.enabled).map((x) => x.item)
+            for (const item of checks) {
+              if (!item) continue
+              result.push(item)
+            }
+
+            return result
           }
 
           yield* Effect.acquireRelease(
@@ -160,7 +171,7 @@ export namespace Format {
           result.push({
             name: formatter.name,
             extensions: formatter.extensions,
-            enabled: isOn,
+            enabled: !!isOn,
           })
         }
         return result
