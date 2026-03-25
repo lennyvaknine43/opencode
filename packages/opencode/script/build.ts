@@ -63,6 +63,10 @@ console.log(`Loaded ${migrations.length} migrations`)
 const singleFlag = process.argv.includes("--single")
 const baselineFlag = process.argv.includes("--baseline")
 const skipInstall = process.argv.includes("--skip-install")
+const skipUpload = process.argv.includes("--skip-release-upload") || process.env.OPENCODE_SKIP_RELEASE_UPLOAD === "1"
+const sign = process.env.APPLE_SIGNING_IDENTITY
+const entitlements = process.env.OPENCODE_CODESIGN_ENTITLEMENTS || path.join(dir, "script/entitlements.plist")
+const raw = process.env.OPENCODE_BUILD_OS?.trim()
 
 const allTargets: {
   os: string
@@ -148,6 +152,31 @@ const targets = singleFlag
     })
   : allTargets
 
+const os = raw
+  ? Array.from(
+      new Set(
+        raw
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
+      ),
+    )
+  : undefined
+
+if (os) {
+  const set = new Set(allTargets.map((item) => item.os))
+  const bad = os.filter((item) => !set.has(item))
+  if (bad.length > 0) {
+    throw new Error(`Invalid OPENCODE_BUILD_OS value: ${bad.join(", ")}`)
+  }
+}
+
+const list = os ? targets.filter((item) => os.includes(item.os)) : targets
+
+if (list.length === 0) {
+  throw new Error("No build targets selected")
+}
+
 await $`rm -rf dist`
 
 const binaries: Record<string, string> = {}
@@ -155,7 +184,7 @@ if (!skipInstall) {
   await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
   await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
 }
-for (const item of targets) {
+for (const item of list) {
   const name = [
     pkg.name,
     // changing to win32 flags npm for some reason
@@ -203,6 +232,24 @@ for (const item of targets) {
     },
   })
 
+  if (item.os === "darwin") {
+    if (Script.release && process.platform !== "darwin") {
+      throw new Error("darwin release binaries must be built on macOS runners")
+    }
+    if (Script.release && !sign) {
+      throw new Error("APPLE_SIGNING_IDENTITY is required for darwin release binaries")
+    }
+    if (process.platform === "darwin" && sign) {
+      if (!fs.existsSync(entitlements)) {
+        throw new Error(`Codesign entitlements file not found: ${entitlements}`)
+      }
+      const file = `dist/${name}/bin/opencode`
+      console.log(`codesigning ${name}`)
+      await $`codesign --entitlements ${entitlements} -vvvv --deep --sign ${sign} ${file} --force`
+      await $`codesign -vvv --verify ${file}`
+    }
+  }
+
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
     const binaryPath = `dist/${name}/bin/opencode`
@@ -240,7 +287,9 @@ if (Script.release) {
       await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
     }
   }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+  if (!skipUpload) {
+    await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+  }
 }
 
 export { binaries }

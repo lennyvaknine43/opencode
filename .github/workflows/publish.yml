@@ -67,7 +67,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       repo: ${{ steps.version.outputs.repo }}
 
-  build-cli:
+  build-cli-linux-win:
     needs: version
     runs-on: blacksmith-4vcpu-ubuntu-2404
     if: github.repository == 'anomalyco/opencode'
@@ -94,17 +94,111 @@ jobs:
           OPENCODE_RELEASE: ${{ needs.version.outputs.release }}
           GH_REPO: ${{ needs.version.outputs.repo }}
           GH_TOKEN: ${{ steps.committer.outputs.token }}
+          OPENCODE_BUILD_OS: linux,win32
+          OPENCODE_SKIP_RELEASE_UPLOAD: "1"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-cli-linux-win
+          path: packages/opencode/dist
+
+  build-cli-darwin:
+    needs: version
+    runs-on: macos-latest
+    if: github.repository == 'anomalyco/opencode'
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-tags: true
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Setup git committer
+        id: committer
+        uses: ./.github/actions/setup-git-committer
+        with:
+          opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
+          opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
+
+      - uses: apple-actions/import-codesign-certs@v2
+        with:
+          keychain: build
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Resolve signing identity
+        run: |
+          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
+          CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
+          if [ -z "$CERT_ID" ]; then
+            echo "Developer ID Application identity not found"
+            exit 1
+          fi
+          echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
+
+      - name: Build
+        id: build
+        run: |
+          ./packages/opencode/script/build.ts
+        env:
+          OPENCODE_VERSION: ${{ needs.version.outputs.version }}
+          OPENCODE_RELEASE: ${{ needs.version.outputs.release }}
+          GH_REPO: ${{ needs.version.outputs.repo }}
+          GH_TOKEN: ${{ steps.committer.outputs.token }}
+          APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
+          OPENCODE_BUILD_OS: darwin
+          OPENCODE_SKIP_RELEASE_UPLOAD: "1"
+
+      - name: Verify darwin signatures
+        run: |
+          for file in packages/opencode/dist/opencode-darwin-*/bin/opencode; do
+            codesign -vvv --verify "$file"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-cli-darwin
+          path: packages/opencode/dist
+
+  build-cli-merge:
+    needs:
+      - version
+      - build-cli-linux-win
+      - build-cli-darwin
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    if: github.repository == 'anomalyco/opencode'
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Setup git committer
+        id: committer
+        uses: ./.github/actions/setup-git-committer
+        with:
+          opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
+          opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: opencode-cli-*
+          path: packages/opencode/dist
+          merge-multiple: true
+
+      - name: Upload CLI release assets
+        if: needs.version.outputs.release
+        run: gh release upload v${{ needs.version.outputs.version }} ./packages/opencode/dist/*.zip ./packages/opencode/dist/*.tar.gz --clobber --repo ${{ needs.version.outputs.repo }}
+        env:
+          GH_TOKEN: ${{ steps.committer.outputs.token }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: opencode-cli
           path: packages/opencode/dist
-    outputs:
-      version: ${{ needs.version.outputs.version }}
 
   build-tauri:
     needs:
-      - build-cli
+      - build-cli-merge
       - version
     continue-on-error: false
     strategy:
@@ -248,7 +342,7 @@ jobs:
 
   build-electron:
     needs:
-      - build-cli
+      - build-cli-merge
       - version
     continue-on-error: false
     strategy:
@@ -372,7 +466,7 @@ jobs:
   publish:
     needs:
       - version
-      - build-cli
+      - build-cli-merge
       - build-tauri
       - build-electron
     runs-on: blacksmith-4vcpu-ubuntu-2404
