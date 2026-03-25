@@ -21,7 +21,7 @@ describe("disposal race condition", () => {
   //
   // The fix should make late writes after deletion a no-op, not a crash.
 
-  test.todo("late part update after session removal should not throw", async () => {
+  test("late part update after session removal should not throw", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
