@@ -76,20 +76,15 @@ export default [
     const time_created = data.info.time.created
     const { id, sessionID, ...rest } = data.info
 
-    try {
-      db.insert(MessageTable)
-        .values({
-          id,
-          session_id: sessionID,
-          time_created,
-          data: rest,
-        })
-        .onConflictDoUpdate({ target: MessageTable.id, set: { data: rest } })
-        .run()
-    } catch (e: any) {
-      if (e?.code === "SQLITE_CONSTRAINT_FOREIGNKEY") return
-      throw e
-    }
+    db.insert(MessageTable)
+      .values({
+        id,
+        session_id: sessionID,
+        time_created,
+        data: rest,
+      })
+      .onConflictDoUpdate({ target: MessageTable.id, set: { data: rest } })
+      .run()
   }),
 
   SyncEvent.project(MessageV2.Event.Removed, (db, data) => {
@@ -107,20 +102,15 @@ export default [
   SyncEvent.project(MessageV2.Event.PartUpdated, (db, data) => {
     const { id, messageID, sessionID, ...rest } = data.part
 
-    try {
-      db.insert(PartTable)
-        .values({
-          id,
-          message_id: messageID,
-          session_id: sessionID,
-          time_created: data.time,
-          data: rest,
-        })
-        .onConflictDoUpdate({ target: PartTable.id, set: { data: rest } })
-        .run()
-    } catch (e: any) {
-      if (e?.code === "SQLITE_CONSTRAINT_FOREIGNKEY") return
-      throw e
-    }
+    db.insert(PartTable)
+      .values({
+        id,
+        message_id: messageID,
+        session_id: sessionID,
+        time_created: data.time,
+        data: rest,
+      })
+      .onConflictDoUpdate({ target: PartTable.id, set: { data: rest } })
+      .run()
   }),
 ]
