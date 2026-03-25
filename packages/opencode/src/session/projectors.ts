@@ -85,15 +85,20 @@ export default [
     const time_created = data.info.time.created
     const { id, sessionID, ...rest } = data.info
 
-    db.insert(MessageTable)
-      .values({
-        id,
-        session_id: sessionID,
-        time_created,
-        data: rest,
-      })
-      .onConflictDoUpdate({ target: MessageTable.id, set: { data: rest } })
-      .run()
+    try {
+      db.insert(MessageTable)
+        .values({
+          id,
+          session_id: sessionID,
+          time_created,
+          data: rest,
+        })
+        .onConflictDoUpdate({ target: MessageTable.id, set: { data: rest } })
+        .run()
+    } catch (err) {
+      if (!foreign(err)) throw err
+      log.warn("ignored late message update", { messageID: id, sessionID })
+    }
   }),
 
   SyncEvent.project(MessageV2.Event.Removed, (db, data) => {
