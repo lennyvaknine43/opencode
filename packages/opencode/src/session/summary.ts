@@ -68,28 +68,31 @@ export namespace SessionSummary {
     return Buffer.from(bytes).toString()
   }
 
-  export const summarize = fn(
-    z.object({
-      sessionID: SessionID.zod,
-      messageID: MessageID.zod,
-    }),
-    async (input) => {
-      await Session.messages({ sessionID: input.sessionID })
-        .then((all) =>
-          Promise.all([
-            summarizeSession({ sessionID: input.sessionID, messages: all }),
-            summarizeMessage({ messageID: input.messageID, messages: all }),
-          ]),
-        )
-        .catch((err) => {
-          if (NotFoundError.isInstance(err)) return
-          throw err
-        })
-    },
-  )
+  export async function summarize(input: {
+    sessionID: SessionID
+    messageID: MessageID
+    abort?: AbortSignal
+  }) {
+    await Session.messages({ sessionID: input.sessionID })
+      .then((all) =>
+        Promise.all([
+          summarizeSession({ sessionID: input.sessionID, messages: all, abort: input.abort }),
+          summarizeMessage({ messageID: input.messageID, messages: all, abort: input.abort }),
+        ]),
+      )
+      .catch((err) => {
+        if (NotFoundError.isInstance(err)) return
+        throw err
+      })
+  }
 
-  async function summarizeSession(input: { sessionID: SessionID; messages: MessageV2.WithParts[] }) {
+  async function summarizeSession(input: {
+    sessionID: SessionID
+    messages: MessageV2.WithParts[]
+    abort?: AbortSignal
+  }) {
     const diffs = await computeDiff({ messages: input.messages })
+    if (input.abort?.aborted) return
     await Session.setSummary({
       sessionID: input.sessionID,
       summary: {
@@ -105,14 +108,20 @@ export namespace SessionSummary {
     })
   }
 
-  async function summarizeMessage(input: { messageID: string; messages: MessageV2.WithParts[] }) {
+  async function summarizeMessage(input: {
+    messageID: string
+    messages: MessageV2.WithParts[]
+    abort?: AbortSignal
+  }) {
     const messages = input.messages.filter(
       (m) => m.info.id === input.messageID || (m.info.role === "assistant" && m.info.parentID === input.messageID),
     )
     const msgWithParts = messages.find((m) => m.info.id === input.messageID)
     if (!msgWithParts) return
+    if (input.abort?.aborted) return
     const userMsg = msgWithParts.info as MessageV2.User
     const diffs = await computeDiff({ messages })
+    if (input.abort?.aborted) return
     userMsg.summary = {
       ...userMsg.summary,
       diffs,

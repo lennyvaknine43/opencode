@@ -661,6 +661,7 @@ export namespace SessionPrompt {
           SessionSummary.summarize({
             sessionID: sessionID,
             messageID: lastUser.id,
+            abort,
           })
         }
 
